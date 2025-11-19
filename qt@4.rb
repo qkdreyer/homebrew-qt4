@@ -21,7 +21,7 @@ class QtAT4 < Formula
   deprecated_option "qtdbus" => "with-dbus"
   deprecated_option "with-d-bus" => "with-dbus"
 
-  depends_on "openssl@1.0"
+  depends_on "rbenv/tap/openssl@1.0"
   depends_on "dbus" => :optional
   depends_on "mysql" => :optional
   depends_on "postgresql" => :optional
@@ -139,8 +139,37 @@ class QtAT4 < Formula
     end
 
     args << "-nomake" << "docs" if build.without? "docs"
+    args << "-debug-and-release" #if debug_symbols?
 
-    args << "-arch" << "x86_64"
+    inreplace 'mkspecs/unsupported/macx-clang-libc++/qmake.conf', /^QMAKE_CXXFLAGS\s*\+=/, "\\0 -Wno-c++11-narrowing"
+    inreplace 'mkspecs/unsupported/macx-clang-libc++/qmake.conf', /^QMAKE_CFLAGS\s*\+=.*$/, "\\0\nQMAKE_OBJECTIVE_CFLAGS += -Wno-c++11-narrowing"
+    inreplace 'src/corelib/io/qfilesystemwatcher_fsevents_p.h', '::stat64', '::stat'
+    inreplace 'src/corelib/io/qfilesystemwatcher_fsevents.cpp', '::stat64', '::stat'
+    inreplace 'src/gui/kernel/qcursor_mac.mm', 'CGEventCreateMouseEvent(0, kCGEventMouseMoved, pos, 0)', 'CGEventCreateMouseEvent(0, kCGEventMouseMoved, pos, kCGMouseButtonLeft)'
+    inreplace 'src/gui/kernel/qwidget_mac.mm', 'setAnimationBehavior: 2', 'setAnimationBehavior: NSWindowAnimationBehaviorNone'
+    inreplace 'src/gui/kernel/qcocoamenuloader_mac.mm', 'setTag:nil', 'setTag:NULL'
+    inreplace 'src/gui/widgets/qmenu_mac.mm', 'setTag:nil', 'setTag:NULL'
+    inreplace 'src/xmlpatterns/api/qcoloroutput_p.h', '((1 << BackgroundShift) - 1) << BackgroundShift', '((1ull << BackgroundShift) - 1ull) << BackgroundShift'
+    inreplace 'src/3rdparty/libpng/pngpriv.h', 'include <fp.h>', 'include <math.h>'
+    inreplace 'src/plugins/accessible/widgets/itemviews.cpp', 'view()->selectionModel()->select(index, QItemSelectionModel::Columns & QItemSelectionModel::Deselect)', 'view()->selectionModel()->select(index, QItemSelectionModel::Columns | QItemSelectionModel::Deselect)'
+
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/wtf/MathExtras.h', '#define ceil(x) wtf_ceil(x)', '// #define ceil(x) wtf_ceil(x)'
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/runtime/Structure.h', 'StructureTransitionTableHash::Key(RefPtr<UString::Rep>(existingTransition->m_nameInPrevious.get()), existingTransition->m_attributesInPrevious)', 'StructureTransitionTableHash::Key(RefPtr<UString::Rep>(existingTransition->m_nameInPrevious.get()), static_cast<unsigned>(existingTransition->m_attributesInPrevious))'
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/bytecompiler/BytecodeGenerator.h', 'LineInfo info = { instructions().size(), n->lineNo() }', 'LineInfo info = { static_cast<uint32_t>(instructions().size()), n->lineNo() }'
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/bytecompiler/BytecodeGenerator.cpp', 'HandlerInfo info = { start->bind(0, 0), end->bind(0, 0), instructions().size(), m_dynamicScopeDepth + m_baseScopeDepth }', 'HandlerInfo info = { static_cast<uint32_t>(start->bind(0, 0)), static_cast<uint32_t>(end->bind(0, 0)), static_cast<uint32_t>(instructions().size()), static_cast<uint32_t>(m_dynamicScopeDepth + m_baseScopeDepth) }'
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/bytecompiler/BytecodeGenerator.cpp', 'SwitchInfo info = { instructions().size(), type }', 'SwitchInfo info = { static_cast<uint32_t>(instructions().size()), type }'
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/runtime/Identifier.cpp', 'UCharBuffer buf = {s, length}', 'UCharBuffer buf = {s, static_cast<unsigned int>(length)}'
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/runtime/JSONObject.cpp', "UChar hex[] = { '\\\\', 'u', hexDigits[(ch >> 12) & 0xF], hexDigits[(ch >> 8) & 0xF], hexDigits[(ch >> 4) & 0xF], hexDigits[ch & 0xF] }", "UChar hex[] = { '\\\\\\\\', 'u', static_cast<UChar>(hexDigits[(ch >> 12) & 0xF]), static_cast<UChar>(hexDigits[(ch >> 8) & 0xF]), static_cast<UChar>(hexDigits[(ch >> 4) & 0xF]), static_cast<UChar>(hexDigits[ch & 0xF]) }"
+    inreplace 'src/3rdparty/javascriptcore/JavaScriptCore/runtime/Structure.cpp', 'StructureTransitionTableHash::Key(RefPtr<UString::Rep>(m_nameInPrevious.get()), m_attributesInPrevious)', 'StructureTransitionTableHash::Key(RefPtr<UString::Rep>(m_nameInPrevious.get()), static_cast<unsigned>(m_attributesInPrevious))'
+
+    if Hardware::CPU.arm?
+      args << "-arch" << "arm64"
+      inreplace 'configure', 'ppc', 'arm64'
+      inreplace 'src/corelib/arch/qatomic_macosx.h', '#else', "#elif defined(__aarch64__)\n#  include <QtCore/qatomic_aarch64.h>\n#else"
+      system "curl https://salsa.debian.org/qt-kde-team/qt/qt4-x11/-/raw/b720da7b9bab7b5331b112dbbe7a51297e12faf7/debian/patches/aarch64_arm64_qatomic_support.patch | patch -p1"
+    else
+      args << "-arch" << "x86_64"
+    end
 
     # Patch macdeployqt so it finds the plugin path
     inreplace "tools/macdeployqt/macdeployqt/main.cpp", '"/Developer/Applications/Qt/plugins"',
@@ -152,29 +181,10 @@ class QtAT4 < Formula
     system "mv src/3rdparty/javascriptcore/VERSION src/3rdparty/javascriptcore/VERSION.md"
 
     system "./configure", *args
+    system "cp src/corelib/arch/qatomic_aarch64.h include/QtCore" if Hardware::CPU.arm?
     system "make"
     ENV.deparallelize
     system "make", "install"
-
-    # Delete qmake, as we'll be rebuilding it
-    system "rm", "bin/qmake"
-    system "rm", "#{bin}/qmake"
-    system "make", "clean"
-
-    # Patch the configure script so the built qmake can find Webkit if installed
-    inreplace "configure", '=$QT_INSTALL_PREFIX"`', "=#{HOMEBREW_PREFIX}\"`"
-    inreplace "configure", '=$QT_INSTALL_DOCS"`', "=#{HOMEBREW_PREFIX}/doc\"`"
-    inreplace "configure", '=$QT_INSTALL_HEADERS"`', "=#{HOMEBREW_PREFIX}/include\"`"
-    inreplace "configure", '=$QT_INSTALL_LIBS"`', "=#{HOMEBREW_PREFIX}/lib\"`"
-    inreplace "configure", '=$QT_INSTALL_BINS"`', "=#{HOMEBREW_PREFIX}/bin\"`"
-    inreplace "configure", '=$QT_INSTALL_PLUGINS"`', "=#{HOMEBREW_PREFIX}/lib/qt4/plugins\"`"
-    inreplace "configure", '=$QT_INSTALL_IMPORTS"`', "=#{HOMEBREW_PREFIX}/lib/qt4/imports\"`"
-    inreplace "configure", '=$QT_INSTALL_DATA"`', "=#{HOMEBREW_PREFIX}/etc/qt4\"`"
-    inreplace "configure", '=$QT_INSTALL_SETTINGS"`', "=#{HOMEBREW_PREFIX}\"`"
-
-    # Run ./configure again, to rebuild qmake
-    system "./configure", *args
-    bin.install "bin/qmake"
 
     # what are these anyway?
     (bin+"pixeltool.app").rmtree
@@ -197,6 +207,10 @@ class QtAT4 < Formula
            "#{bin}/Designer.app/Contents/Info.plist"
 
     Pathname.glob("#{bin}/*.app") { |app| mv app, prefix }
+  end
+
+  def post_install
+    system "cp $(brew --cache)/Sources/qtA4/qt-everywhere-opensource-src-4.8.7/src/corelib/arch/qatomic_aarch64.h #{HOMEBREW_PREFIX}/include/QtCore" if Hardware::CPU.arm?
   end
 
   def caveats
